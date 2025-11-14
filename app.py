@@ -1,296 +1,601 @@
-import streamlit as st
 import pandas as pd
-import plotly.express as px
 import io
+import streamlit as st
+import plotly.express as px
 
-# Set page to wide layout
-st.set_page_config(layout="wide")
+# Page layout
+st.set_page_config(page_title="CloudMart Tagging Dashboard", layout="wide")
 
+# File path
+file_path = "cloudmart_multi_account.csv"
 
-@st.cache_data
-def load_data(file_path):
-    """
-    Loads and pre-processes the dataset from a file.
-    This function is cached for performance.
-    """
-    try:
-        # Open the file and read lines
-        with open(file_path, 'r') as f:
-            lines = f.readlines()
+try:
+    # --- Pre-process the file ---
+    # Read the file line by line
+    with open(file_path, "r") as f:
+        lines = f.readlines()
 
-        # Strip surrounding quotes and newlines
-        cleaned_lines = [line.strip().strip('"') for line in lines]
+    # Strip the surrounding quotes and newline characters from each line
+    cleaned_lines = [line.strip().strip('"') for line in lines]
 
-        # Use io.StringIO to treat the cleaned text as a file
-        csv_in_memory = io.StringIO("\n".join(cleaned_lines))
+    # Join the cleaned lines back into a single string
+    # and read it into pandas using io.StringIO
+    csv_in_memory = io.StringIO("\n".join(cleaned_lines))
 
-        # Read the CSV from the in-memory string
-        df = pd.read_csv(csv_in_memory)
+    # Read the CSV from the in-memory string
+    df = pd.read_csv(csv_in_memory)
 
-        # --- Data Type Conversion & Feature Engineering ---
-        # Convert cost to numeric
-        if 'MonthlyCostUSD' in df.columns:
-            df['MonthlyCostUSD'] = pd.to_numeric(df['MonthlyCostUSD'], errors='coerce')
+    # --- Data Type Conversion ---
+    # Convert MonthlyCostUSD to numeric
+    if "MonthlyCostUSD" in df.columns:
+        df["MonthlyCostUSD"] = pd.to_numeric(df["MonthlyCostUSD"], errors="coerce")
 
-        # --- Task 4: Create status columns for cleaner charts ---
-        df['Tagged_Status'] = df['Tagged'].fillna('Missing')
-        df['Environment_Status'] = df['Environment'].fillna('Missing')
+    # --------------------------------------------------
+    # Task Set 1 – Data Exploration
+    # --------------------------------------------------
+    st.header("Task Set 1 – Data Exploration")
 
-        # --- Task 3: Create Tag Completeness Score ---
-        tag_columns = ['Department', 'Project', 'Environment', 'Owner', 'CostCenter']
-        df['TagCompletenessScore'] = len(tag_columns) - df[tag_columns].isnull().sum(axis=1)
+    # --- Task 1.1: Display the first 5 rows ---
+    st.subheader("Task 1.1: First 5 Rows")
+    st.dataframe(df.head())
 
-        return df.copy()
-
-    except FileNotFoundError:
-        st.error(f"Error: File '{file_path}' not found. Please make sure it's in the same directory.")
-        return None
-    except Exception as e:
-        st.error(f"An error occurred while loading the data: {e}")
-        return None
-
-
-@st.cache_data
-def df_to_csv(df):
-    """Converts a DataFrame to a CSV string for download."""
-    return df.to_csv(index=False).encode('utf-8')
-
-
-# --- Main App ---
-
-# Load the data
-df_original = load_data('cloudmart_multi_account.csv')
-
-if df_original is not None:
-
-    # --- Initialize Session State for Remediation (Task 5.1) ---
-    if 'edited_df' not in st.session_state:
-        st.session_state.edited_df = df_original.copy()
-
-    st.title("☁️ CloudMart Resource Tagging Dashboard")
-
-    # --- Sidebar Filters (Task 4.5) ---
-    st.sidebar.header("Filters")
-
-    # Get unique, sorted lists for filters
-    services = sorted(st.session_state.edited_df['Service'].dropna().unique())
-    regions = sorted(st.session_state.edited_df['Region'].dropna().unique())
-    departments = sorted(st.session_state.edited_df['Department'].dropna().unique())
-
-    # Create multiselect widgets
-    selected_services = st.sidebar.multiselect("Service", services, default=services)
-    selected_regions = st.sidebar.multiselect("Region", regions, default=regions)
-    selected_departments = st.sidebar.multiselect("Department", departments, default=departments)
-
-    # --- Filter DataFrames ---
-    # We need two dataframes:
-    # 1. df_filtered_original: The "Before" state, based on filters.
-    # 2. df_filtered_edited: The "After" state, based on filters AND user edits.
-
-    # Base filter criteria
-    filter_criteria = (
-            (st.session_state.edited_df['Service'].isin(selected_services)) &
-            (st.session_state.edited_df['Region'].isin(selected_regions)) &
-            (st.session_state.edited_df['Department'].isin(selected_departments) | st.session_state.edited_df[
-                'Department'].isnull())  # Include null depts
+    # DataFrame Info (user-friendly table)
+    st.subheader("DataFrame Info")
+    df_info = pd.DataFrame(
+        {
+            "Column": df.columns,
+            "Non-Null Count": df.notnull().sum().values,
+            "Dtype": df.dtypes.astype(str).values,
+        }
     )
+    st.dataframe(df_info)
 
-    # Apply filters to both original and edited data
-    df_filtered_original = df_original[filter_criteria].copy()
-    df_filtered_edited = st.session_state.edited_df[filter_criteria].copy()
+    # --- Task 1.2: Check for missing values ---
+    st.subheader("Task 1.2: Missing Values Count")
+    missing_values = df.isnull().sum()
+    st.dataframe(missing_values.to_frame(name="MissingCount"))
 
-    # --- App Layout (Tabs) ---
-    tab1, tab2 = st.tabs(["📊 Visualization Dashboard (Task 4)", "🏷️ Tag Remediation Workflow (Task 5)"])
+    # --- Task 1.3: Identify column with most missing values ---
+    st.subheader("Task 1.3: Columns with Most Missing Values")
+    sorted_missing = missing_values.sort_values(ascending=False)
+    st.dataframe(sorted_missing.to_frame(name="MissingCount"))
 
-    # --- TAB 1: VISUALIZATION DASHBOARD (TASK 4) ---
-    with tab1:
-        st.header("Dashboard")
-        st.markdown(
-            "This dashboard reflects the **current state** of the data. If you remediate tags in Tab 2, the charts here will update.")
+    # --- Task 1.4: Count tagged vs. untagged resources ---
+    st.subheader("Task 1.4: Tagged vs. Untagged Resource Count")
+    if "Tagged" in df.columns:
+        tagged_counts = df["Tagged"].value_counts(dropna=False)
+        st.dataframe(tagged_counts.to_frame(name="Count"))
 
-        # --- Key Metrics ---
-        total_cost = df_filtered_edited['MonthlyCostUSD'].sum()
-        untagged_cost = df_filtered_edited[df_filtered_edited['Tagged_Status'] == 'No']['MonthlyCostUSD'].sum()
-        untagged_percent = (untagged_cost / total_cost) * 100 if total_cost > 0 else 0
+        # --- Task 1.5: Percentage of untagged resources ---
+        st.subheader("Task 1.5: Percentage of Untagged Resources")
+        if "No" in tagged_counts.index:
+            untagged_count = tagged_counts["No"]
+            total_resources = len(df)
+            percentage_untagged = (untagged_count / total_resources) * 100
+            st.metric("Untagged Resources (%)", f"{percentage_untagged:.2f}%")
+        else:
+            st.write("No 'Untagged' ('No') resources found.")
+    else:
+        st.write("\n'Tagged' column not found. Cannot perform tasks 1.4 and 1.5.")
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Cost", f"${total_cost:,.2f}")
-        col2.metric("Untagged Cost", f"${untagged_cost:,.2f}")
-        col3.metric("Untagged Cost %", f"{untagged_percent:.2f}%")
+    # --------------------------------------------------
+    # Task Set 2 – Cost Visibility
+    # --------------------------------------------------
+    st.header("Task Set 2 – Cost Visibility")
 
-        st.divider()
-
-        # --- Charts (Task 4.1 - 4.4) ---
-        col1, col2 = st.columns(2)
-
-        with col1:
-            # 4.1: Pie chart of tagged vs untagged resources
-            st.subheader("Tagged vs. Untagged Resource Counts")
-            tagged_counts = df_filtered_edited['Tagged_Status'].value_counts().reset_index()
-            fig_pie_tagged = px.pie(tagged_counts,
-                                    names='Tagged_Status',
-                                    values='count',
-                                    title="Resource Tagging Status",
-                                    color='Tagged_Status',
-                                    color_discrete_map={'Yes': '#00B050', 'No': '#FF0000', 'Missing': '#A0A0A0'})
-            st.plotly_chart(fig_pie_tagged, width='stretch')  # UPDATED
-
-            # 4.3: Horizontal bar chart of total cost per service
-            st.subheader("Total Cost by Service")
-            cost_by_service = df_filtered_edited.groupby('Service')['MonthlyCostUSD'].sum().reset_index()
-            fig_bar_service = px.bar(cost_by_service.sort_values(by='MonthlyCostUSD', ascending=True),
-                                     x='MonthlyCostUSD',
-                                     y='Service',
-                                     orientation='h',
-                                     title='Total Monthly Cost per Service')
-            st.plotly_chart(fig_bar_service, width='stretch')  # UPDATED
-
-        with col2:
-            # 4.2: Bar chart showing cost per department by tagging status
-            st.subheader("Cost per Department by Tagging Status")
-            cost_by_dept_tagged = df_filtered_edited.groupby(['Department', 'Tagged_Status'])[
-                'MonthlyCostUSD'].sum().reset_index()
-            fig_bar_dept = px.bar(cost_by_dept_tagged,
-                                  x='Department',
-                                  y='MonthlyCostUSD',
-                                  color='Tagged_Status',
-                                  title='Cost by Department & Tagging Status',
-                                  barmode='group',
-                                  color_discrete_map={'Yes': '#00B050', 'No': '#FF0000', 'Missing': '#A0A0A0'})
-            st.plotly_chart(fig_bar_dept, width='stretch')  # UPDATED
-
-            # 4.4: Visualize cost by environment
-            st.subheader("Cost by Environment")
-            cost_by_env = df_filtered_edited.groupby('Environment_Status')['MonthlyCostUSD'].sum().reset_index()
-            fig_pie_env = px.pie(cost_by_env,
-                                 names='Environment_Status',
-                                 values='MonthlyCostUSD',
-                                 title='Monthly Cost by Environment')
-            st.plotly_chart(fig_pie_env, width='stretch')  # UPDATED
-
-    # --- TAB 2: TAG REMEDIATION WORKFLOW (TASK 5) ---
-    with tab2:
-        st.header("Tag Remediation Workflow")
-
-        # --- Task 5.4: Compare cost visibility before and after ---
-        st.subheader("Comparison: Before vs. After Remediation")
-        st.markdown("This compares the original filtered data ('Before') with your edited data ('After').")
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("#### Before Remediation")
-            orig_untagged_cost = df_filtered_original[df_filtered_original['Tagged_Status'] == 'No'][
-                'MonthlyCostUSD'].sum()
-            orig_missing_owner = df_filtered_original['Owner'].isnull().sum()
-            st.metric("Untagged Cost", f"${orig_untagged_cost:,.2f}")
-            st.metric("Resources Missing Owner", f"{orig_missing_owner}")
-
-        with col2:
-            st.markdown("#### After Remediation")
-            edited_untagged_cost = df_filtered_edited[df_filtered_edited['Tagged_Status'] == 'No'][
-                'MonthlyCostUSD'].sum()
-            edited_missing_owner = df_filtered_edited['Owner'].isnull().sum()
-            st.metric("Untagged Cost", f"${edited_untagged_cost:,.2f}",
-                      delta=f"{edited_untagged_cost - orig_untagged_cost:,.2f}")
-            st.metric("Resources Missing Owner", f"{edited_missing_owner}",
-                      delta=f"{edited_missing_owner - orig_missing_owner}")
-
-        st.divider()
-
-        # --- Task 5.1 & 5.2: Editable table for untagged resources ---
-        st.subheader("Remediate Untagged Resources")
-        st.info(
-            "Edit the resources below. Changes are saved as you type and will update the 'After' metrics and the Dashboard tab.")
-
-        # We want to edit resources that are untagged OR have missing key tags
-        cols_to_edit = ['ResourceID', 'Service', 'Department', 'Project', 'Environment', 'Owner', 'MonthlyCostUSD',
-                        'Tagged']
-
-        # Find the indices in the main session state dataframe that need editing
-        # We edit resources where 'Tagged' is 'No' OR key tags are missing
-        remediation_mask = (
-                (st.session_state.edited_df['Tagged'] == 'No') |
-                (st.session_state.edited_df['Department'].isnull()) |
-                (st.session_state.edited_df['Project'].isnull()) |
-                (st.session_state.edited_df['Owner'].isnull())
+    if "MonthlyCostUSD" not in df.columns:
+        st.error(
+            "The dataset does not contain a 'MonthlyCostUSD' column, so cost visibility tasks cannot be calculated."
         )
-        remediation_indices = st.session_state.edited_df[remediation_mask].index
+    else:
+        # 2.1 – Total cost of tagged vs untagged resources
+        st.subheader("2.1 – Total Cost of Tagged vs Untagged Resources")
 
-        # Create a view of the dataframe for the editor
-        df_for_editor = st.session_state.edited_df.loc[remediation_indices, cols_to_edit]
-
-        # Use st.data_editor to allow edits
-        edited_subset = st.data_editor(
-            df_for_editor,
-            key="data_editor",
-            num_rows="dynamic",
-            width='stretch',  # UPDATED
-            column_config={
-                "ResourceID": st.column_config.TextColumn("Resource ID (Read Only)", disabled=True),
-                "Service": st.column_config.TextColumn("Service (Read Only)", disabled=True),
-                "MonthlyCostUSD": st.column_config.NumberColumn("Cost (Read Only)", disabled=True)
-            }
+        cost_by_tag = (
+            df.groupby("Tagged", dropna=False)["MonthlyCostUSD"]
+            .sum()
+            .reset_index()
+            .rename(columns={"MonthlyCostUSD": "TotalCostUSD"})
         )
+        st.dataframe(cost_by_tag)
 
-        # --- Update Session State with Edits ---
-        # This is the most important part: merge the edits back into the main session state df
-        if edited_subset is not None:
-            # Update the main dataframe in session state
-            st.session_state.edited_df.update(edited_subset)
+        # 2.2 – Percentage of total cost that is untagged
+        st.subheader("2.2 – Percentage of Total Cost that is Untagged")
 
-            # --- Auto-update 'Tagged' status ---
-            # If a user fills in key tags, we should consider it 'Tagged'
-            # This logic is a business rule: if Dept, Proj, Env, and Owner exist, it's 'Yes'
+        total_cost = df["MonthlyCostUSD"].sum()
+        untagged_cost = df.loc[df["Tagged"] == "No", "MonthlyCostUSD"].sum()
 
-            # Get the indices that were just edited
-            edited_indices = edited_subset.index
+        if total_cost > 0:
+            pct_untagged_cost = (untagged_cost / total_cost) * 100
+        else:
+            pct_untagged_cost = 0.0
 
-            # Check for completeness on the edited rows
-            key_tags_filled = (
-                    st.session_state.edited_df.loc[edited_indices, 'Department'].notnull() &
-                    st.session_state.edited_df.loc[edited_indices, 'Project'].notnull() &
-                    st.session_state.edited_df.loc[edited_indices, 'Environment'].notnull() &
-                    st.session_state.edited_df.loc[edited_indices, 'Owner'].notnull()
+        col_a, col_b, col_c = st.columns(3)
+        col_a.metric("Total Cost (All Resources)", f"${total_cost:,.2f}")
+        col_b.metric("Untagged Cost", f"${untagged_cost:,.2f}")
+        col_c.metric("Untagged Cost (%)", f"{pct_untagged_cost:.2f}%")
+
+        # 2.3 – Department with the most untagged cost
+        st.subheader("2.3 – Department with the Most Untagged Cost")
+
+        if "Department" in df.columns:
+            dept_untagged = (
+                df[df["Tagged"] == "No"]
+                .groupby("Department")["MonthlyCostUSD"]
+                .sum()
+                .sort_values(ascending=False)
             )
 
-            # Update 'Tagged' status to 'Yes' for rows that are now complete
-            st.session_state.edited_df.loc[edited_indices[key_tags_filled], 'Tagged'] = 'Yes'
-            # Re-calculate the 'Tagged_Status' helper column
-            st.session_state.edited_df['Tagged_Status'] = st.session_state.edited_df['Tagged'].fillna('Missing')
+            if not dept_untagged.empty:
+                st.write("Untagged cost by department (sorted descending):")
+                st.dataframe(dept_untagged.to_frame(name="UntaggedCostUSD"))
 
-            # Rerun to update the "Before/After" metrics instantly
-            st.rerun()
+                top_dept = dept_untagged.index[0]
+                top_cost = dept_untagged.iloc[0]
+                st.markdown(
+                    f"**Department with highest untagged cost:** `{top_dept}` "
+                    f"with **${top_cost:,.2f}** untagged."
+                )
+            else:
+                st.write("There are no untagged resources to analyze by department.")
+        else:
+            st.write("Column 'Department' not found in the dataset.")
 
-        # --- Task 5.3: Download the updated dataset ---
-        st.divider()
-        st.subheader("Download Remediated Data")
-        st.markdown("Download the *entire* dataset with all your remediations applied.")
+        # 2.4 – Project that consumes the most cost overall
+        st.subheader("2.4 – Project with the Highest Total Cost")
 
-        csv_data_edited = df_to_csv(st.session_state.edited_df)
-        st.download_button(
-            label="Download Remediated Data as CSV",
-            data=csv_data_edited,
-            file_name="remediated_cloud_costs.csv",
-            mime="text/csv",
+        if "Project" in df.columns:
+            project_cost = (
+                df.groupby("Project")["MonthlyCostUSD"]
+                .sum()
+                .sort_values(ascending=False)
+            )
+            st.dataframe(project_cost.to_frame(name="TotalCostUSD"))
+
+            if not project_cost.empty:
+                top_project = project_cost.index[0]
+                top_project_cost = project_cost.iloc[0]
+                st.markdown(
+                    f"**Project with highest total cost:** `{top_project}` "
+                    f"with **${top_project_cost:,.2f}**."
+                )
+        else:
+            st.write("Column 'Project' not found in the dataset.")
+
+        # 2.5 – Compare Prod vs Dev environments in terms of cost and tagging quality
+        st.subheader("2.5 – Prod vs Dev: Cost and Tagging Quality")
+
+        if "Environment" in df.columns:
+            env_filter = df["Environment"].isin(["Prod", "Dev"])
+            df_env = df[env_filter].copy()
+
+            if df_env.empty:
+                st.write("No Prod or Dev environment data found.")
+            else:
+                env_tag_cost = (
+                    df_env.groupby(["Environment", "Tagged"])["MonthlyCostUSD"]
+                    .sum()
+                    .reset_index()
+                    .rename(columns={"MonthlyCostUSD": "TotalCostUSD"})
+                )
+
+                st.write("Total cost by Environment and Tagging status:")
+                st.dataframe(env_tag_cost)
+
+                env_tag_pivot = env_tag_cost.pivot(
+                    index="Environment", columns="Tagged", values="TotalCostUSD"
+                )
+                st.write("Pivot view (Environment x Tagged):")
+                st.dataframe(env_tag_pivot)
+
+                env_tag_counts = (
+                    df_env.groupby(["Environment", "Tagged"])["ResourceID"]
+                    .count()
+                    .reset_index()
+                    .rename(columns={"ResourceID": "ResourceCount"})
+                )
+                st.write("Resource counts by Environment and Tagging status:")
+                st.dataframe(env_tag_counts)
+        else:
+            st.write("Column 'Environment' not found in the dataset.")
+
+    # --------------------------------------------------
+    # Task Set 3 – Tagging Compliance
+    # --------------------------------------------------
+    st.header("Task Set 3 – Tagging Compliance")
+
+    # Define which columns count as tag fields
+    candidate_tag_fields = [
+        "Department",
+        "Project",
+        "Environment",
+        "Owner",
+        "CostCenter",
+        "CreatedBy",
+    ]
+    tag_fields = [col for col in candidate_tag_fields if col in df.columns]
+
+    if not tag_fields:
+        st.error("No tag fields found in the dataset for compliance analysis.")
+    else:
+        st.write(
+            "Tag fields considered for completeness score:", ", ".join(tag_fields)
         )
 
-        # --- Task 5.5: Discuss impact ---
-        st.divider()
-        st.subheader("Task 5.5: Reflection on Tagging Impact")
-        st.markdown("""
-        **How does improved tagging affect accountability and reports?**
+        # 3.1 – Create a “Tag Completeness Score” per resource
+        st.subheader("3.1 – Tag Completeness Score per Resource")
 
-        This remediation workflow directly demonstrates the business value of tagging:
+        df["TagCompletenessScore"] = df[tag_fields].notnull().sum(axis=1)
 
-        * **Accountability:** Before remediation, the "Untagged Cost" metric (e.g., $2,250) represents money spent with **no clear owner**. It's impossible to ask "Why is the Sales team spending so much on RDS?" if the resource isn't tagged 'Sales'. By filling in the `Owner` and `Department` tags, you immediately assign accountability.
+        cols_to_show = ["ResourceID"] if "ResourceID" in df.columns else []
+        cols_to_show += tag_fields + ["TagCompletenessScore"]
 
-        * **Cost Visibility & Reporting:** You cannot build an accurate financial report without good tags.
-            * **Missing `Department`:** This cost is "lost" and cannot be allocated to any team's budget, leading to inaccurate P&L reports.
-            * **Missing `Project`:** You can't tell which products are profitable. Is 'CampaignApp' (costing $500) worth the investment? It's impossible to know if half its resources are untagged.
-            * **Missing `Environment`:** You can't separate 'Prod' (cost of doing business) from 'Dev' (cost of innovation). This was a key finding in our data: **100% of 'Dev' resources were untagged**, making it look like a "shadow" cost center.
+        st.dataframe(df[cols_to_show])
 
-        By remediating tags, you turn ambiguous, untracked spending into clear, actionable business intelligence.
-        """)
+        # 3.2 – Top 5 resources with lowest completeness scores
+        st.subheader("3.2 – Top 5 Resources with Lowest Completeness Scores")
 
-else:
-    st.error("Failed to load data. The dashboard cannot be displayed.")
+        df_lowest = df.sort_values(by="TagCompletenessScore", ascending=True)
+        top5_lowest = df_lowest[cols_to_show].head(5)
+        st.dataframe(top5_lowest)
+
+        # 3.3 – Most frequently missing tag fields
+        st.subheader("3.3 – Most Frequently Missing Tag Fields")
+
+        missing_tag_counts = df[tag_fields].isnull().sum().sort_values(ascending=False)
+        missing_tag_df = missing_tag_counts.to_frame(name="MissingCount")
+        missing_tag_df["MissingPercentage"] = (
+            missing_tag_df["MissingCount"] / len(df) * 100
+        )
+        st.dataframe(missing_tag_df)
+
+        # 3.4 – List all untagged resources and their costs
+        st.subheader("3.4 – Untagged Resources and Their Costs")
+
+        if "Tagged" in df.columns:
+            untagged_resources = df[df["Tagged"] == "No"].copy()
+
+            if not untagged_resources.empty:
+                cols_untagged = ["ResourceID", "MonthlyCostUSD"]
+                for col in tag_fields:
+                    if col not in cols_untagged:
+                        cols_untagged.append(col)
+
+                cols_untagged = [
+                    c for c in cols_untagged if c in untagged_resources.columns
+                ]
+
+                st.dataframe(untagged_resources[cols_untagged])
+
+                # 3.5 – Export untagged resources to a new CSV file
+                st.subheader("3.5 – Export Untagged Resources to CSV")
+
+                csv_buffer = io.StringIO()
+                untagged_resources.to_csv(csv_buffer, index=False)
+                csv_bytes = csv_buffer.getvalue().encode("utf-8")
+
+                st.download_button(
+                    label="Download untagged_resources.csv",
+                    data=csv_bytes,
+                    file_name="untagged_resources.csv",
+                    mime="text/csv",
+                )
+            else:
+                st.write("There are no untagged resources in the dataset.")
+        else:
+            st.write("Column 'Tagged' not found in the dataset; cannot list untagged resources.")
+
+    # --------------------------------------------------
+    # Task Set 4 – Visualization Dashboard
+    # --------------------------------------------------
+    st.header("Task Set 4 – Visualization Dashboard")
+
+    # 4.5 – Interactive filters
+    st.subheader("4.5 – Interactive Filters")
+    st.write("Use the filters on the left sidebar to slice the data.")
+
+    with st.sidebar.expander("Filters", expanded=True):
+        service_options = (
+            sorted(df["Service"].dropna().unique()) if "Service" in df.columns else []
+        )
+        region_options = (
+            sorted(df["Region"].dropna().unique()) if "Region" in df.columns else []
+        )
+        dept_options = (
+            sorted(df["Department"].dropna().unique())
+            if "Department" in df.columns
+            else []
+        )
+
+        selected_services = (
+            st.multiselect(
+                "Filter by Service",
+                options=service_options,
+                default=service_options,
+            )
+            if service_options
+            else []
+        )
+
+        selected_regions = (
+            st.multiselect(
+                "Filter by Region",
+                options=region_options,
+                default=region_options,
+            )
+            if region_options
+            else []
+        )
+
+        selected_departments = (
+            st.multiselect(
+                "Filter by Department",
+                options=dept_options,
+                default=dept_options,
+            )
+            if dept_options
+            else []
+        )
+
+    # Apply filters
+    df_filtered = df.copy()
+
+    if "Service" in df.columns and selected_services:
+        df_filtered = df_filtered[df_filtered["Service"].isin(selected_services)]
+
+    if "Region" in df.columns and selected_regions:
+        df_filtered = df_filtered[df_filtered["Region"].isin(selected_regions)]
+
+    if "Department" in df.columns and selected_departments:
+        df_filtered = df_filtered[df_filtered["Department"].isin(selected_departments)]
+
+    st.write(f"Filtered rows: {len(df_filtered)} of {len(df)} total.")
+
+    if df_filtered.empty:
+        st.warning("No data to display with the current filters.")
+    else:
+        # 4.1 – Pie chart of tagged vs untagged resources
+        if "Tagged" in df_filtered.columns:
+            st.subheader("4.1 – Tagged vs Untagged Resources (Count)")
+            tag_counts = df_filtered["Tagged"].value_counts().reset_index()
+            tag_counts.columns = ["Tagged", "Count"]
+
+            fig_pie = px.pie(
+                tag_counts,
+                names="Tagged",
+                values="Count",
+                hole=0.3,
+                title="Tagged vs Untagged Resources",
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        # 4.2 – Bar chart: cost per department by tagging status
+        if {"Department", "Tagged", "MonthlyCostUSD"}.issubset(df_filtered.columns):
+            st.subheader("4.2 – Cost per Department by Tagging Status")
+
+            dept_cost = (
+                df_filtered.groupby(["Department", "Tagged"])["MonthlyCostUSD"]
+                .sum()
+                .reset_index()
+            )
+
+            fig_bar_dept = px.bar(
+                dept_cost,
+                x="Department",
+                y="MonthlyCostUSD",
+                color="Tagged",
+                barmode="group",
+                labels={"MonthlyCostUSD": "Total Cost (USD)"},
+                title="Cost per Department by Tagging Status",
+            )
+            st.plotly_chart(fig_bar_dept, use_container_width=True)
+
+        # 4.3 – Horizontal bar chart: total cost per service
+        if {"Service", "MonthlyCostUSD"}.issubset(df_filtered.columns):
+            st.subheader("4.3 – Total Cost per Service")
+
+            svc_cost = (
+                df_filtered.groupby("Service")["MonthlyCostUSD"]
+                .sum()
+                .reset_index()
+            )
+
+            fig_bar_svc = px.bar(
+                svc_cost,
+                x="MonthlyCostUSD",
+                y="Service",
+                orientation="h",
+                labels={"MonthlyCostUSD": "Total Cost (USD)", "Service": "Service"},
+                title="Total Cost per Service",
+            )
+            st.plotly_chart(fig_bar_svc, use_container_width=True)
+
+        # 4.4 – Cost by environment (Prod, Dev, Test)
+        if {"Environment", "MonthlyCostUSD"}.issubset(df_filtered.columns):
+            st.subheader("4.4 – Cost by Environment (Prod, Dev, Test)")
+
+            env_cost = (
+                df_filtered.groupby("Environment")["MonthlyCostUSD"]
+                .sum()
+                .reset_index()
+            )
+
+            fig_env = px.bar(
+                env_cost,
+                x="Environment",
+                y="MonthlyCostUSD",
+                labels={"MonthlyCostUSD": "Total Cost (USD)", "Environment": "Environment"},
+                title="Total Cost by Environment",
+            )
+            st.plotly_chart(fig_env, use_container_width=True)
+
+    # --------------------------------------------------
+    # Task Set 5 – Tag Remediation Workflow
+    # --------------------------------------------------
+    st.header("Task Set 5 – Tag Remediation Workflow")
+
+    if "Tagged" not in df.columns:
+        st.error(
+            "Column 'Tagged' not found in the dataset; cannot perform remediation workflow."
+        )
+    elif "ResourceID" not in df.columns:
+        st.error(
+            "Column 'ResourceID' not found in the dataset; cannot safely merge edits back."
+        )
+    else:
+        # 5.1 & 5.2 – Editable table for untagged resources (simulate remediation)
+        st.subheader("5.1 & 5.2 – Edit Untagged Resources")
+
+        untagged_original = df[df["Tagged"] == "No"].copy()
+
+        if untagged_original.empty:
+            st.write("There are no untagged resources to remediate.")
+        else:
+            # Add a unique RowID based on the original index
+            untagged_original["RowID"] = untagged_original.index
+
+            # Reuse tag_fields from Task Set 3 if available, otherwise infer basic tag fields
+            try:
+                current_tag_fields = tag_fields
+            except NameError:
+                candidate_tag_fields = [
+                    "Department",
+                    "Project",
+                    "Environment",
+                    "Owner",
+                    "CostCenter",
+                    "CreatedBy",
+                ]
+                current_tag_fields = [
+                    c for c in candidate_tag_fields if c in df.columns
+                ]
+
+            editable_cols = [
+                c for c in current_tag_fields if c in untagged_original.columns
+            ]
+
+            base_cols = ["RowID", "ResourceID"]
+            if "MonthlyCostUSD" in untagged_original.columns:
+                base_cols.append("MonthlyCostUSD")
+
+            columns_for_editor = base_cols + editable_cols
+
+            st.write("Update missing or incorrect tags directly in the table below:")
+            edited_untagged = st.data_editor(
+                untagged_original[columns_for_editor],
+                num_rows="dynamic",
+                key="untagged_editor",
+            )
+
+            # 5.3 – Download the updated (remediated) dataset
+            st.subheader("5.3 – Download Updated Dataset (After Remediation)")
+
+            # Build a remediated copy of the full dataset by updating tag columns using RowID (unique per row)
+            df_remediated = df.copy()
+            edited_for_update = edited_untagged.set_index("RowID")
+
+            for col in editable_cols:
+                if col in edited_for_update.columns and col in df_remediated.columns:
+                    df_remediated.loc[edited_for_update.index, col] = edited_for_update[
+                        col
+                    ]
+
+            # Write CSV (no RowID column)
+            csv_buf_remediated = io.StringIO()
+            df_remediated.to_csv(
+                csv_buf_remediated,
+                index=False,
+                columns=[c for c in df_remediated.columns if c != "RowID"],
+            )
+            csv_bytes_remediated = csv_buf_remediated.getvalue().encode("utf-8")
+
+            st.download_button(
+                label="Download remediated_dataset.csv",
+                data=csv_bytes_remediated,
+                file_name="remediated_dataset.csv",
+                mime="text/csv",
+            )
+
+            # 5.4 – Compare cost visibility before and after remediation
+            st.subheader("5.4 – Cost Visibility: Before vs After Remediation")
+
+            if "MonthlyCostUSD" in df.columns:
+                # Before remediation
+                before_total_cost = df["MonthlyCostUSD"].sum()
+                before_untagged_cost = df.loc[
+                    df["Tagged"] == "No", "MonthlyCostUSD"
+                ].sum()
+                before_untagged_resources = (df["Tagged"] == "No").sum()
+                before_pct_untagged_cost = (
+                    before_untagged_cost / before_total_cost * 100
+                    if before_total_cost > 0
+                    else 0.0
+                )
+
+                # After remediation: mark resources as tagged if all tag fields are now filled
+                df_after = df_remediated.copy()
+
+                if current_tag_fields:
+                    completeness_mask = df_after[current_tag_fields].notnull().all(
+                        axis=1
+                    )
+                    df_after.loc[completeness_mask, "Tagged"] = "Yes"
+
+                after_total_cost = df_after["MonthlyCostUSD"].sum()
+                after_untagged_cost = df_after.loc[
+                    df_after["Tagged"] == "No", "MonthlyCostUSD"
+                ].sum()
+                after_untagged_resources = (df_after["Tagged"] == "No").sum()
+                after_pct_untagged_cost = (
+                    after_untagged_cost / after_total_cost * 100
+                    if after_total_cost > 0
+                    else 0.0
+                )
+
+                col_before, col_after = st.columns(2)
+
+                with col_before:
+                    st.markdown("**Before Remediation**")
+                    st.metric("Untagged Cost (USD)", f"${before_untagged_cost:,.2f}")
+                    st.metric("Untagged Cost (%)", f"{before_pct_untagged_cost:.2f}%")
+                    st.metric(
+                        "Untagged Resources (count)", int(before_untagged_resources)
+                    )
+
+                with col_after:
+                    st.markdown("**After Remediation**")
+                    st.metric("Untagged Cost (USD)", f"${after_untagged_cost:,.2f}")
+                    st.metric("Untagged Cost (%)", f"{after_pct_untagged_cost:.2f}%")
+                    st.metric(
+                        "Untagged Resources (count)", int(after_untagged_resources)
+                    )
+
+                st.write(
+                    "Use these metrics to explain in your report how improving tagging "
+                    "reduces hidden (untagged) cost and increases accountability."
+                )
+            else:
+                st.write(
+                    "Column 'MonthlyCostUSD' not found; cannot compare cost visibility."
+                )
+
+            # 5.5 – Reflection prompt
+            st.subheader("5.5 – Reflection")
+            st.write(
+                "Use this space to draft your short reflection for the report (text is not saved):"
+            )
+            st.text_area(
+                "Reflection (copy-paste this into your report document):",
+                height=150,
+                placeholder=(
+                    "Example ideas:\n"
+                    "- How much did untagged cost decrease after remediation?\n"
+                    "- Which departments or projects were most affected?\n"
+                    "- Why is consistent tagging important for cost governance?"
+                ),
+            )
+
+except FileNotFoundError:
+    st.error(f"Error: File '{file_path}' not found.")
+except Exception as e:
+    st.error(f"An error occurred: {e}")
